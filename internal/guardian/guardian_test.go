@@ -192,6 +192,81 @@ func TestAllCandidatesFailRefreshesHTTPProviders(t *testing.T) {
 	}
 }
 
+func TestCountryPriorityAlwaysStartsFromFirstCountry(t *testing.T) {
+	cfg := testConfig()
+	cfg.ConsecutiveFailures = 1
+	cfg.CountryPriority = []string{"日本", "香港", "美国"}
+	cfg.CountryFallback = "any"
+	api := &fakeAPI{
+		proxies: map[string]clash.Proxy{
+			"Proxy":      {Name: "Proxy", Type: "Selector", Now: "香港-current", All: []string{"香港-current", "日本-slower", "香港-fast", "美国-fastest"}},
+			"香港-current": {Name: "香港-current", Type: "Trojan"},
+			"日本-slower":  {Name: "日本-slower", Type: "Trojan"},
+			"香港-fast":    {Name: "香港-fast", Type: "Trojan"},
+			"美国-fastest": {Name: "美国-fastest", Type: "Trojan"},
+		},
+		delays: map[string]map[string]int{
+			"香港-current": {},
+			"日本-slower":  {"https://one.example": 300, "https://two.example": 320},
+			"香港-fast":    {"https://one.example": 30, "https://two.example": 35},
+			"美国-fastest": {"https://one.example": 10, "https://two.example": 15},
+		},
+	}
+	runner := New(cfg, api, &fakeNotifier{}, log.New(io.Discard, "", 0), state.Store{Path: filepath.Join(t.TempDir(), "state.json")})
+	if err := runner.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := api.proxies["Proxy"].Now; got != "日本-slower" {
+		t.Fatalf("当前在香港时重新选节点仍应从日本开始，得到 %q", got)
+	}
+}
+
+func TestCountryPriorityFallsThroughOnlyWhenHigherCountryFails(t *testing.T) {
+	cfg := testConfig()
+	cfg.ConsecutiveFailures = 1
+	cfg.CountryPriority = []string{"日本", "香港", "美国"}
+	cfg.CountryFallback = "none"
+	api := &fakeAPI{
+		proxies: map[string]clash.Proxy{
+			"Proxy":   {Name: "Proxy", Type: "Selector", Now: "bad", All: []string{"bad", "日本-bad", "香港-good", "美国-good"}},
+			"bad":     {Name: "bad", Type: "Trojan"},
+			"日本-bad":  {Name: "日本-bad", Type: "Trojan"},
+			"香港-good": {Name: "香港-good", Type: "Trojan"},
+			"美国-good": {Name: "美国-good", Type: "Trojan"},
+		},
+		delays: map[string]map[string]int{
+			"bad": {}, "日本-bad": {},
+			"香港-good": {"https://one.example": 100, "https://two.example": 110},
+			"美国-good": {"https://one.example": 20, "https://two.example": 25},
+		},
+	}
+	runner := New(cfg, api, &fakeNotifier{}, log.New(io.Discard, "", 0), state.Store{Path: filepath.Join(t.TempDir(), "state.json")})
+	if err := runner.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := api.proxies["Proxy"].Now; got != "香港-good" {
+		t.Fatalf("日本失败后应选择香港而非更快的美国，得到 %q", got)
+	}
+}
+
+func TestCountryFallbackNoneExcludesUnmatchedCountries(t *testing.T) {
+	buckets := buildCandidateBuckets(
+		[]string{"日本-a", "香港-b", "新加坡-c"},
+		[]string{"日本", "香港"},
+		"none",
+	)
+	if len(buckets) != 2 || buckets[0].Label != "日本" || buckets[1].Label != "香港" {
+		t.Fatalf("国家桶顺序错误: %#v", buckets)
+	}
+	for _, bucket := range buckets {
+		for _, name := range bucket.Names {
+			if strings.Contains(name, "新加坡") {
+				t.Fatalf("none 模式不应包含未匹配国家: %#v", buckets)
+			}
+		}
+	}
+}
+
 func TestResolveEffectiveNestedGroup(t *testing.T) {
 	proxies := map[string]clash.Proxy{
 		"Main":   {Type: "Selector", Now: "Auto"},

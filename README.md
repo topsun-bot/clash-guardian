@@ -10,7 +10,7 @@
 - 默认每 15 秒通过当前实际节点检测两个境外 HTTPS 地址
 - 连续失败 3 次后才触发故障转移
 - 从 `/proxies` 自动读取主策略组及候选节点
-- 并发测试候选节点，优先选择覆盖两个检测地址且延迟较低的节点
+- 严格按国家优先级逐组检测，在同一国家内并发测试并选择稳定、低延迟节点
 - 切换后重新验证；失败会继续尝试下一节点
 - 所有候选节点不可用时刷新 HTTP `proxy-provider`，或运行可配置的刷新命令
 - 网络恢复、节点切换及持续故障时发送系统通知
@@ -43,6 +43,7 @@ Clash Verge Rev 在 macOS 上通常无需额外设置，程序可以自动发现
 ```bash
 ./clash-guardian init --controller http://127.0.0.1:9090
 ./clash-guardian init --socket /path/to/mihomo.sock
+./clash-guardian init --country-priority 日本,香港,美国 --country-fallback any
 ```
 
 Mihomo HTTP API 的典型配置为：
@@ -110,12 +111,37 @@ version    显示版本
 
 1. 读取配置主策略组的当前成员。
 2. 跳过当前节点、`DIRECT` 和 `REJECT` 等非代理成员。
-3. 并发测试全部候选。
-4. 优先选择成功地址更多的节点，其次比较平均评分。
+3. 按 `country_priority` 从第一项开始，先只测试该国家的节点。
+4. 当前国家没有可用节点才进入下一国家；同一国家内优先选择成功地址更多的节点，其次比较平均评分。
 5. 切换后再次检测两个地址。
-6. 全部失败则刷新远程 provider，等待 `provider_retry_seconds` 后再试。
+6. 优先国家全部失败后，根据 `country_fallback` 决定是否测试其他国家。
+7. 全部失败则刷新远程 provider，等待 `provider_retry_seconds` 后再试。
 
 检测通过 Mihomo 的节点延迟 API 执行，因此检查的是目标策略组的实际节点，不会被其他分流规则误导。
+
+## 国家优先级
+
+默认顺序为：
+
+```json
+{
+  "country_priority": ["日本", "香港", "美国"],
+  "country_fallback": "any"
+}
+```
+
+国家名称按节点名进行不区分大小写的包含匹配。例如 `R5-4|日本-NF|IIJ` 会进入“日本”候选组。也可以直接使用订阅采用的英文标记，例如 `JP`、`HK`、`US`。
+
+每次真正需要重新获取节点时，都会从顺序第一项重新开始。例如当前已经切换到香港，香港节点后来发生故障，程序仍会先重新测试日本；日本没有可用节点才测试其他香港节点，然后再测试美国。
+
+线路健康时不会周期性重选，也不会仅仅为了回到第一国家而主动切换。程序重启后会继续使用 Clash 当前节点，直到该节点连续检测失败。
+
+`country_fallback` 支持：
+
+- `any`：优先国家全部不可用时，最后测试未匹配到国家列表的其他节点。
+- `none`：只允许使用 `country_priority` 中列出的国家。
+
+如果不需要国家限制，可以将 `country_priority` 设置为空数组 `[]`。
 
 ## 订阅刷新说明
 
@@ -159,4 +185,3 @@ make build
 `make build` 会生成 macOS arm64/amd64、Linux arm64/amd64 和 Windows amd64 二进制文件。
 
 OpenWrt 尚未加入安装器，但核心程序可以在 Linux/OpenWrt 上编译运行；后续只需增加 procd 服务安装适配。
-

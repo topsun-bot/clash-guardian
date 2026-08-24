@@ -13,6 +13,7 @@
   "minimum_successful_checks": 1,
   "switch_settle_seconds": 1,
   "provider_retry_seconds": 30,
+  "country_priority": ["日本", "香港", "美国"],
+  "country_fallback": "any",
   "notify": true
 }
-

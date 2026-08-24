@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const appName = "clash-guardian"
@@ -24,6 +25,8 @@ type Config struct {
 	MinimumSuccessfulChecks int      `json:"minimum_successful_checks"`
 	SwitchSettleSeconds     int      `json:"switch_settle_seconds"`
 	ProviderRetrySeconds    int      `json:"provider_retry_seconds"`
+	CountryPriority         []string `json:"country_priority"`
+	CountryFallback         string   `json:"country_fallback"`
 	Notify                  bool     `json:"notify"`
 	RefreshCommand          []string `json:"refresh_command,omitempty"`
 }
@@ -39,6 +42,8 @@ func Default() Config {
 		MinimumSuccessfulChecks: 1,
 		SwitchSettleSeconds:     1,
 		ProviderRetrySeconds:    30,
+		CountryPriority:         []string{"日本", "香港", "美国"},
+		CountryFallback:         "any",
 		Notify:                  true,
 	}
 }
@@ -71,6 +76,12 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.ProviderRetrySeconds == 0 {
 		c.ProviderRetrySeconds = d.ProviderRetrySeconds
+	}
+	if c.CountryPriority == nil {
+		c.CountryPriority = append([]string(nil), d.CountryPriority...)
+	}
+	if c.CountryFallback == "" {
+		c.CountryFallback = d.CountryFallback
 	}
 }
 
@@ -107,6 +118,21 @@ func (c Config) Validate() error {
 	}
 	if c.SwitchSettleSeconds < 0 || c.ProviderRetrySeconds < 1 {
 		return errors.New("切换等待不能为负数，重试间隔必须大于 0")
+	}
+	seenCountries := map[string]bool{}
+	for _, country := range c.CountryPriority {
+		country = strings.TrimSpace(country)
+		if country == "" {
+			return errors.New("country_priority 不能包含空值")
+		}
+		key := strings.ToLower(country)
+		if seenCountries[key] {
+			return fmt.Errorf("country_priority 包含重复项: %q", country)
+		}
+		seenCountries[key] = true
+	}
+	if c.CountryFallback != "any" && c.CountryFallback != "none" {
+		return errors.New("country_fallback 只能是 any 或 none")
 	}
 	if len(c.RefreshCommand) == 1 && c.RefreshCommand[0] == "" {
 		return errors.New("refresh_command 不能是空命令")

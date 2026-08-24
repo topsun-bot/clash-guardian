@@ -48,6 +48,11 @@ type SwitchResult struct {
 	To   string
 }
 
+type candidateBucket struct {
+	Label string
+	Names []string
+}
+
 type Runner struct {
 	cfg       config.Config
 	api       clash.API
@@ -259,56 +264,102 @@ func (r *Runner) Failover(ctx context.Context) (SwitchResult, error) {
 		return SwitchResult{}, ErrNoUsableCandidate
 	}
 
-	tested := r.testCandidates(ctx, candidates)
-	healthy := make([]CandidateResult, 0, len(tested))
-	for _, candidate := range tested {
-		if candidate.Healthy {
-			healthy = append(healthy, candidate)
-		}
-	}
-	if len(healthy) == 0 {
+	buckets := buildCandidateBuckets(candidates, r.cfg.CountryPriority, r.cfg.CountryFallback)
+	if len(buckets) == 0 {
 		return SwitchResult{}, ErrNoUsableCandidate
 	}
-	sort.SliceStable(healthy, func(i, j int) bool {
-		if healthy[i].Successful != healthy[j].Successful {
-			return healthy[i].Successful > healthy[j].Successful
-		}
-		if healthy[i].Score != healthy[j].Score {
-			return healthy[i].Score < healthy[j].Score
-		}
-		return healthy[i].Name < healthy[j].Name
-	})
-
-	for _, candidate := range healthy {
-		r.logger.Printf("尝试切换到候选节点=%q，成功检测=%d/%d，评分=%dms", candidate.Name, candidate.Successful, len(r.cfg.Checks), candidate.Score)
-		if err := r.api.Select(ctx, r.cfg.Group, candidate.Name); err != nil {
-			r.logger.Printf("切换到 %q 失败: %v", candidate.Name, err)
-			continue
-		}
-		if r.cfg.SwitchSettleSeconds > 0 {
-			select {
-			case <-ctx.Done():
-				return SwitchResult{}, ctx.Err()
-			case <-time.After(time.Duration(r.cfg.SwitchSettleSeconds) * time.Second):
+	for _, bucket := range buckets {
+		r.logger.Printf("按国家优先级测试 %s，候选节点=%d", bucket.Label, len(bucket.Names))
+		tested := r.testCandidates(ctx, bucket.Names)
+		healthy := make([]CandidateResult, 0, len(tested))
+		for _, candidate := range tested {
+			if candidate.Healthy {
+				healthy = append(healthy, candidate)
 			}
 		}
-		updated, err := r.api.Proxies(ctx)
-		if err != nil {
-			r.logger.Printf("切换后读取策略组失败: %v", err)
+		if len(healthy) == 0 {
+			r.logger.Printf("%s 没有可用节点，继续下一优先级", bucket.Label)
 			continue
 		}
-		to, err := ResolveEffective(updated, r.cfg.Group)
-		if err != nil {
-			r.logger.Printf("切换后解析节点失败: %v", err)
-			continue
+		sort.SliceStable(healthy, func(i, j int) bool {
+			if healthy[i].Successful != healthy[j].Successful {
+				return healthy[i].Successful > healthy[j].Successful
+			}
+			if healthy[i].Score != healthy[j].Score {
+				return healthy[i].Score < healthy[j].Score
+			}
+			return healthy[i].Name < healthy[j].Name
+		})
+
+		for _, candidate := range healthy {
+			r.logger.Printf("尝试切换到候选节点=%q，国家优先级=%s，成功检测=%d/%d，评分=%dms", candidate.Name, bucket.Label, candidate.Successful, len(r.cfg.Checks), candidate.Score)
+			if err := r.api.Select(ctx, r.cfg.Group, candidate.Name); err != nil {
+				r.logger.Printf("切换到 %q 失败: %v", candidate.Name, err)
+				continue
+			}
+			if r.cfg.SwitchSettleSeconds > 0 {
+				select {
+				case <-ctx.Done():
+					return SwitchResult{}, ctx.Err()
+				case <-time.After(time.Duration(r.cfg.SwitchSettleSeconds) * time.Second):
+				}
+			}
+			updated, err := r.api.Proxies(ctx)
+			if err != nil {
+				r.logger.Printf("切换后读取策略组失败: %v", err)
+				continue
+			}
+			to, err := ResolveEffective(updated, r.cfg.Group)
+			if err != nil {
+				r.logger.Printf("切换后解析节点失败: %v", err)
+				continue
+			}
+			verification := r.probe(ctx, to)
+			if countSuccessful(verification) >= r.cfg.MinimumSuccessfulChecks {
+				return SwitchResult{From: from, To: to}, nil
+			}
+			r.logger.Printf("节点 %q 切换后复检失败，继续尝试当前国家的下一个节点", to)
 		}
-		verification := r.probe(ctx, to)
-		if countSuccessful(verification) >= r.cfg.MinimumSuccessfulChecks {
-			return SwitchResult{From: from, To: to}, nil
-		}
-		r.logger.Printf("节点 %q 切换后复检失败，继续尝试下一个", to)
 	}
 	return SwitchResult{}, ErrNoUsableCandidate
+}
+
+func buildCandidateBuckets(candidates, priority []string, fallback string) []candidateBucket {
+	if len(priority) == 0 {
+		if len(candidates) == 0 {
+			return nil
+		}
+		return []candidateBucket{{Label: "全部节点", Names: append([]string(nil), candidates...)}}
+	}
+	buckets := make([]candidateBucket, len(priority))
+	for i, country := range priority {
+		buckets[i].Label = country
+	}
+	unmatched := make([]string, 0)
+	for _, name := range candidates {
+		matched := false
+		lowerName := strings.ToLower(name)
+		for i, country := range priority {
+			if strings.Contains(lowerName, strings.ToLower(strings.TrimSpace(country))) {
+				buckets[i].Names = append(buckets[i].Names, name)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			unmatched = append(unmatched, name)
+		}
+	}
+	result := make([]candidateBucket, 0, len(buckets)+1)
+	for _, bucket := range buckets {
+		if len(bucket.Names) > 0 {
+			result = append(result, bucket)
+		}
+	}
+	if fallback == "any" && len(unmatched) > 0 {
+		result = append(result, candidateBucket{Label: "其他国家兜底", Names: unmatched})
+	}
+	return result
 }
 
 func (r *Runner) Refresh(ctx context.Context) (int, error) {

@@ -24,7 +24,7 @@ import (
 	"github.com/clash-guardian/clash-guardian/internal/state"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -90,6 +90,9 @@ func initCommand(args []string) error {
 	unixSocket := fs.String("socket", "", "Clash Unix Socket 路径")
 	secret := fs.String("secret", os.Getenv("CLASH_SECRET"), "Clash API secret")
 	groupName := fs.String("group", "", "需要守护的主策略组")
+	defaults := config.Default()
+	countryPriority := fs.String("country-priority", strings.Join(defaults.CountryPriority, ","), "国家优先级，使用逗号分隔；留空表示不限制")
+	countryFallback := fs.String("country-fallback", defaults.CountryFallback, "优先国家全部不可用时的行为：any 或 none")
 	yes := fs.Bool("yes", false, "接受自动推荐，适合无人值守初始化")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -212,6 +215,8 @@ func initCommand(args []string) error {
 	cfg.UnixSocket = endpoint.UnixSocket
 	cfg.Secret = *secret
 	cfg.Group = selectedGroup
+	cfg.CountryPriority = splitCommaList(*countryPriority)
+	cfg.CountryFallback = strings.ToLower(strings.TrimSpace(*countryFallback))
 	if cfg.UnixSocket != "" {
 		cfg.Controller = ""
 	}
@@ -220,6 +225,11 @@ func initCommand(args []string) error {
 	}
 	fmt.Printf("配置已保存：%s（仅当前用户可读）\n", *configPath)
 	fmt.Printf("主策略组：%s\n", selectedGroup)
+	if len(cfg.CountryPriority) > 0 {
+		fmt.Printf("国家优先级：%s；兜底策略：%s\n", strings.Join(cfg.CountryPriority, " → "), cfg.CountryFallback)
+	} else {
+		fmt.Println("国家优先级：未限制")
+	}
 	if providers, providerErr := api.Providers(ctx); providerErr == nil {
 		hasHTTPProvider := false
 		for _, provider := range providers {
@@ -318,6 +328,9 @@ func statusCommand(args []string) error {
 	fmt.Printf("策略组：%s (%s)\n", cfg.Group, group.Type)
 	fmt.Printf("当前选择：%s\n", group.Now)
 	fmt.Printf("实际节点：%s\n", effective)
+	if len(cfg.CountryPriority) > 0 {
+		fmt.Printf("国家优先级：%s；兜底策略：%s\n", strings.Join(cfg.CountryPriority, " → "), cfg.CountryFallback)
+	}
 	if !value.LastCheck.IsZero() {
 		fmt.Printf("最近检测：%s\n", value.LastCheck.Local().Format(time.RFC3339))
 		fmt.Printf("连续失败：%d\n", value.ConsecutiveFailures)
@@ -403,4 +416,15 @@ func endpointLabel(endpoint discovery.Endpoint) string {
 		return "unix://" + endpoint.UnixSocket
 	}
 	return endpoint.Controller
+}
+
+func splitCommaList(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }
