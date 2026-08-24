@@ -1,0 +1,18 @@
+{
+  "controller": "http://127.0.0.1:9090",
+  "secret": "",
+  "group": "Proxy",
+  "checks": [
+    "https://cp.cloudflare.com/generate_204",
+    "https://www.gstatic.com/generate_204"
+  ],
+  "check_interval_seconds": 15,
+  "request_timeout_seconds": 8,
+  "consecutive_failures": 3,
+  "candidate_concurrency": 8,
+  "minimum_successful_checks": 1,
+  "switch_settle_seconds": 1,
+  "provider_retry_seconds": 30,
+  "notify": true
+}
+

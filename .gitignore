@@ -1,0 +1,7 @@
+/dist/
+/clash-guardian
+/clash-guardian.exe
+*.log
+state.json
+config.local.json
+
