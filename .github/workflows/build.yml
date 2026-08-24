@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -53,3 +53,21 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          tag="build-${short_sha}"
+          title="Automatic build ${short_sha}"
+          notes="Automatic cross-platform binaries for commit ${GITHUB_SHA}."
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${tag}" release/* --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${tag}" release/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --prerelease \
+              --title "${title}" \
+              --notes "${notes}"
+          fi

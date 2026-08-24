@@ -8,7 +8,9 @@
 - `clash-guardian-linux-amd64.tar.gz`：x86-64 Linux
 - `clash-guardian-windows-amd64.zip`：64 位 Windows
 
-构建完成后，打开仓库的 **Actions** 页面，进入对应的 `Build cross-platform binaries` 任务，在 **Artifacts** 区域下载以提交编号命名的构建包。构建包保留 90 天。
+构建完成后，打开仓库的 **Releases** 页面即可按提交编号下载五个平台的压缩包。自动构建会标记为 prerelease，名称类似 `Automatic build ff4b6e7`。
+
+同一批文件也会保存在对应 GitHub Actions 任务的 **Artifacts** 区域，保留 90 天，作为构建记录和备用下载入口。
 
 本地构建仍然使用：
 
@@ -17,4 +19,3 @@ make build
 ```
 
 生成的原始文件位于 `dist/`，该目录不会提交进 Git 历史。
-
