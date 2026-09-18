@@ -1,5 +1,8 @@
 # Clash Guardian
 
+[已实现](#已实现) · [快速开始](#快速开始) · [命令](#命令) · [平台行为](#平台行为) · [默认故障逻辑](#默认故障逻辑) · [国家优先级](#国家优先级)
+
+
 一个小型、跨平台的 Clash/Mihomo 网络守护程序。它等待 Clash 启动，持续检查主策略组的实际节点，在连续故障后测试并切换备用节点，恢复时发送系统通知。
 
 适合 Clash Verge Rev、Clash Nyanpasu、ClashX Meta，以及其他开放 Mihomo REST API 或 Unix Socket 的客户端。
